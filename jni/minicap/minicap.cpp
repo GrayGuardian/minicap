@@ -14,6 +14,9 @@
 #include <iostream>
 #include <mutex>
 #include <thread>
+#include <time.h>
+#include <fstream>
+using std::ofstream;
 
 #include <Minicap.hpp>
 
@@ -44,6 +47,7 @@ usage(const char* pname) {
     "  -P <value>:    Display projection (<w>x<h>@<w>x<h>/{0|90|180|270}).\n"
     "  -Q <value>:    JPEG quality (0-100).\n"
     "  -s:            Take a screenshot and output it to stdout. Needs -P.\n"
+    "  -f <value>:    Take a screenshot and output it to File. Needs11 -P.\n"
     "  -S:            Skip frames when they cannot be consumed quickly enough.\n"
     "  -r <value>:    Frame rate (frames/s)"
     "  -t:            Attempt to get the capture method running, then exit.\n"
@@ -210,17 +214,19 @@ int
 main(int argc, char* argv[]) {
   const char* pname = argv[0];
   const char* sockname = DEFAULT_SOCKET_NAME;
+  const char* savefile = "";
   uint32_t displayId = DEFAULT_DISPLAY_ID;
   unsigned int quality = DEFAULT_JPG_QUALITY;
   int framePeriodMs = 0;
   bool showInfo = false;
   bool takeScreenshot = false;
+  bool saveScreenshot = false;
   bool skipFrames = false;
   bool testOnly = false;
   Projection proj;
 
   int opt;
-  while ((opt = getopt(argc, argv, "d:n:P:Q:r:siSth")) != -1) {
+  while ((opt = getopt(argc, argv, "d:n:P:Q:r:f:siSth")) != -1) {
     float frameRate;
     switch (opt) {
     case 'd':
@@ -242,6 +248,10 @@ main(int argc, char* argv[]) {
       break;
     case 's':
       takeScreenshot = true;
+      break;
+    case 'f':
+      saveScreenshot = true;
+      savefile = optarg;
       break;
     case 'i':
       showInfo = true;
@@ -428,6 +438,43 @@ main(int argc, char* argv[]) {
     }
 
     return EXIT_SUCCESS;
+  }
+
+  if (saveScreenshot) {
+      if (!gWaiter.waitForFrame()) {
+          MCERROR("Unable to wait for frame");
+          goto disaster;
+      }
+
+      int err;
+      if ((err = minicap->consumePendingFrame(&frame)) != 0) {
+          MCERROR("Unable to consume pending frame");
+          goto disaster;
+      }
+
+      if (!encoder.encode(&frame, quality)) {
+          MCERROR("Unable to encode frame");
+          goto disaster;
+      }
+      clock_t start = clock();
+      unsigned char* data = encoder.getEncodedData();
+      size_t size = encoder.getEncodedSize();
+      ofstream stream;
+      stream.open(savefile);
+      if (!stream)
+      {
+          MCERROR("Opening file failed [%s]", savefile);
+          goto disaster;
+      }
+      stream.write(reinterpret_cast<char*>(data), size);
+      if (!stream)
+      {
+          MCERROR("Write failed [%s]", savefile);
+          goto disaster;
+      }
+      MCINFO("screencap success! save to %s: 1 file pushed (%lld bytes in %lfs)",savefile,size,double(clock()-start)/CLOCKS_PER_SEC);
+
+      return EXIT_SUCCESS;
   }
 
   if (testOnly) {
